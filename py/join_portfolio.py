@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-Stage 3 (daily): Join Quicken portfolio positions with Morningstar sector data.
+Step 4 (daily): Join Quicken portfolio positions with Morningstar sector data.
 
 Inputs:
-  data/output/fund_sectors.csv      - from parse/parse_fund_profiles.py
-  data/output/morningstar_sectors.csv - from parse/parse_xray_sectors.py (optional)
-  analyze/name_map.csv              - maps Quicken names → sector keys + tickers
+  data/output/fund_sectors.csv      - from py/parse_fund_profiles.py
+  data/output/morningstar_sectors.csv - optional
+  name_map.csv                      - maps Quicken names → tickers + exchange
   $QUICKEN_ARCHIVE/portfolio_YYYY-MM-DD.csv  (most recent)
 
 Usage:
-  python3 analyze/join_portfolio.py
-  python3 analyze/join_portfolio.py --quicken path/to/portfolio_2026-04-30.csv
+  python3 py/join_portfolio.py
+  python3 py/join_portfolio.py --quicken path/to/portfolio_2026-04-30.csv
 """
 
 import csv
@@ -126,7 +126,7 @@ def main():
     args = parser.parse_args()
 
     quicken_path = Path(args.quicken) if args.quicken else find_latest_quicken()
-    name_map_csv = Path(__file__).parent / "name_map.csv"
+    name_map_csv = REPO / "name_map.csv"
 
     if not name_map_csv.exists():
         sys.exit(f"ERROR: {name_map_csv} not found")

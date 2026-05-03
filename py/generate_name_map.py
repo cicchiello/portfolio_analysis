@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Generate analyze/name_map.csv from the latest Quicken export.
+Generate name_map.csv from the latest Quicken export.
 
 Exchange is derived from 5 rules applied to the uppercase ticker:
   1. 5 chars ending X                     → fund,   xnas
   2. Starts with SPU                      → pfund,  pfund
   3. Starts with a digit                  → bond,   (blank — no Morningstar download)
-  4. Ends with ZF                         → equity, pinx
-  5. Otherwise                            → equity, exchange from existing name_map or blank
+  4. Ends with ZF                         → stock,  pinx
+  5. Otherwise                            → stock,  exchange from existing name_map or blank
 
 Prints warnings for:
   - New securities with unknown exchange (manual entry required in name_map.csv)
@@ -15,8 +15,8 @@ Prints warnings for:
   - Securities no longer in the portfolio (removed from name_map.csv)
 
 Usage:
-  python3 analyze/generate_name_map.py
-  python3 analyze/generate_name_map.py --quicken path/to/portfolio_YYYY-MM-DD.csv
+  python3 py/generate_name_map.py
+  python3 py/generate_name_map.py --quicken path/to/portfolio_YYYY-MM-DD.csv
 """
 
 import argparse
@@ -119,7 +119,7 @@ def main():
     args = parser.parse_args()
 
     quicken_path = Path(args.quicken) if args.quicken else find_latest_quicken()
-    name_map_path = Path(__file__).parent / "name_map.csv"
+    name_map_path = REPO / "name_map.csv"
 
     existing = load_existing(name_map_path)
     holdings = parse_quicken(quicken_path)

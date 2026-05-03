@@ -2,7 +2,7 @@
 """
 Tier 1: Download Morningstar fund/equity profile pages.
 
-Reads analyze/name_map.csv and downloads one HTML page per holding that has
+Reads name_map.csv and downloads one HTML page per holding that has
 Asset_Type and Exchange populated. Uses Playwright (headless Chromium) so that
 JavaScript-rendered content is fully loaded before saving.
 
@@ -19,10 +19,10 @@ Setup (one-time, per environment):
   playwright install chromium
 
 Usage:
-  python3 download/download_profiles.py                  # download all (re-downloads existing)
-  python3 download/download_profiles.py --skip-existing  # skip files already on disk
-  python3 download/download_profiles.py --dry-run        # print URLs without downloading
-  python3 download/download_profiles.py --delay 3        # seconds between requests (default 2)
+  python3 py/download_profiles.py                  # download all (re-downloads existing)
+  python3 py/download_profiles.py --skip-existing  # skip files already on disk
+  python3 py/download_profiles.py --dry-run        # print URLs without downloading
+  python3 py/download_profiles.py --delay 3        # seconds between requests (default 2)
 
 Output: data/raw/profiles/{ticker}.html
 """
@@ -50,7 +50,7 @@ _URL_TEMPLATES = {
 
 def load_targets():
     """Read name_map.csv; return one target dict per row with Exchange + Ticker populated."""
-    name_map = REPO / "analyze/name_map.csv"
+    name_map = REPO / "name_map.csv"
     if not name_map.exists():
         sys.exit(f"ERROR: {name_map} not found")
 

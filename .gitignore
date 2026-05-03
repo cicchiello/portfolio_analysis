@@ -1,6 +1,6 @@
-.venv/
+pyvenv/
 data/
-analyze/name_map.csv
+name_map.csv
 *.pyc
 __pycache__/
 .DS_Store
