@@ -32,7 +32,7 @@ import time
 import argparse
 from pathlib import Path
 
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout, Error as PlaywrightError
 
 _MS_BASE = "https://www.morningstar.com"
 
@@ -128,15 +128,23 @@ def main():
             try:
                 page.goto(t["url"], wait_until="networkidle", timeout=15000)
             except PlaywrightTimeout:
-                pass
+                try:
+                    page.wait_for_load_state("domcontentloaded", timeout=5000)
+                except PlaywrightTimeout:
+                    pass
 
-            title = page.title()
-            if "verification" in title.lower() or "challenge" in title.lower():
-                print(f"  BLOCKED (bot challenge): {t['ticker']}  ({t['name']})")
+            try:
+                title = page.title()
+                if "verification" in title.lower() or "challenge" in title.lower():
+                    print(f"  BLOCKED (bot challenge): {t['ticker']}  ({t['name']})")
+                    errors += 1
+                    continue
+                html = page.content()
+            except PlaywrightError as e:
+                print(f"  ERROR (page not ready): {t['ticker']}  ({t['name']}): {e}")
                 errors += 1
                 continue
 
-            html = page.content()
             out.write_text(html, encoding="utf-8")
             print(f"  downloaded: {t['ticker']}  ({t['name']})")
             ok += 1
