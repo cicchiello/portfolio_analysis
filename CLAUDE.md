@@ -6,55 +6,69 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Automated sector analysis of an investment portfolio. Joins nightly Quicken portfolio exports with Morningstar sector classification data to produce a daily enriched holdings CSV for analysis by OpenClaw.
 
-**Current status:** Pipeline fully operational end-to-end. All four steps run nightly via `daily_run.sh`.
+**Current status:** Pipeline fully operational end-to-end. All four steps run nightly via `bin/analyze.sh`.
 
 ## Running the pipeline
 
 ```bash
-# Set up dev venv (one-time)
-python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
+# Set up venv (one-time)
+python3 -m venv pyvenv && source pyvenv/bin/activate && pip install -r requirements.txt
 playwright install chromium   # also needed on Pi after pip install
 
 # Full daily pipeline
-./daily_run.sh
+./bin/analyze.sh <data-root> <quicken-archive>
 
 # Individual steps
-python3 analyze/generate_name_map.py             # Step 1: Quicken export → name_map.csv
-python3 download/download_profiles.py            # Step 2: download all Morningstar profiles
-python3 download/download_profiles.py --skip-existing  # Step 2: only download missing files
-python3 download/download_profiles.py --dry-run  # Step 2: print URLs without downloading
-python3 parse/parse_fund_profiles.py --force     # Step 3: HTML → fund_sectors.csv
-python3 analyze/join_portfolio.py                # Step 4: join Quicken + sector data
-python3 analyze/join_portfolio.py --quicken path/to/portfolio_YYYY-MM-DD.csv
+python3 py/generate_name_map.py \
+    --name-map <data-root>/name_map.csv \
+    --quicken-archive <dir>
+
+python3 py/download_profiles.py \
+    --name-map <data-root>/name_map.csv \
+    --work-dir <data-root>/work_YYYYMMDD
+    [--skip-existing] [--dry-run] [--ticker AAPL MSFT ...]
+
+python3 py/parse_fund_profiles.py \
+    --work-dir <data-root>/work_YYYYMMDD
+    [--force]
+
+python3 py/join_portfolio.py \
+    --name-map <data-root>/name_map.csv \
+    --fund-sectors <data-root>/work_YYYYMMDD/fund_sectors.csv \
+    --out <data-root>/portfolio_with_sectors_YYYYMMDD.csv \
+    --quicken-archive <dir>
 ```
 
 ## Four-step daily pipeline
 
 ```
-Step 1 — Generate name_map (analyze/generate_name_map.py)
-  reads:  $QUICKEN_ARCHIVE/portfolio_YYYY-MM-DD.csv  (most recent)
-  writes: analyze/name_map.csv
+Step 1 — Generate name_map (py/generate_name_map.py)
+  reads:  <quicken-archive>/portfolio_YYYY-MM-DD.csv  (most recent)
+          <data-root>/name_map.csv  (existing — preserves Exchange values)
+  writes: <data-root>/name_map.csv
   warns:  new securities with unknown Exchange (need manual entry)
 
-Step 2 — Download profiles (download/download_profiles.py)
-  reads:  analyze/name_map.csv
-  writes: data/raw/profiles/{ticker}.html  (one file per non-bond holding)
+Step 2 — Download profiles (py/download_profiles.py)
+  reads:  <data-root>/name_map.csv
+  writes: <data-root>/work_YYYYMMDD/{ticker}.html  (one per non-bond holding)
   skips:  holdings with blank Exchange (bonds)
 
-Step 3 — Parse profiles (parse/parse_fund_profiles.py)
-  reads:  data/raw/profiles/*.html
-  writes: data/output/fund_sectors.csv
+Step 3 — Parse profiles (py/parse_fund_profiles.py)
+  reads:  <data-root>/work_YYYYMMDD/*.html
+  writes: <data-root>/work_YYYYMMDD/fund_sectors.csv
 
-Step 4 — Join (analyze/join_portfolio.py)
-  reads:  data/output/fund_sectors.csv
-          analyze/name_map.csv
-          $QUICKEN_ARCHIVE/portfolio_YYYY-MM-DD.csv  (most recent)
-  writes: data/output/portfolio_with_sectors.csv
+Step 4 — Join (py/join_portfolio.py)
+  reads:  <data-root>/work_YYYYMMDD/fund_sectors.csv
+          <data-root>/name_map.csv
+          <quicken-archive>/portfolio_YYYY-MM-DD.csv  (most recent)
+  writes: <data-root>/portfolio_with_sectors_YYYYMMDD.csv
 ```
 
-## Key reference file: `analyze/name_map.csv`
+`bin/analyze.sh` takes both paths as required arguments and passes them explicitly to each script.
 
-Generated nightly by `generate_name_map.py`. Do not edit by hand — re-run the generator instead. Columns:
+## Key reference file: `name_map.csv`
+
+Generated nightly by `generate_name_map.py`. Gitignored — must be manually placed at `<data-root>/name_map.csv` on each deployment. Columns:
 
 - `Quicken_Name` — exact string from the Quicken CSV export
 - `Ticker` — instrument ticker (uppercase for pfund; lowercase used in Morningstar URLs)
@@ -70,9 +84,9 @@ Generated nightly by `generate_name_map.py`. Do not edit by hand — re-run the 
 
 Exchange is preserved from existing name_map for known holdings. `etf` Asset_Type is also preserved (can't be auto-detected from ticker). All other Asset_Type values are always rule-derived.
 
-When `join_portfolio.py` reports positions with no sector data, the cause is either: (a) profile not yet downloaded, or (b) no GICS sector breakdown on the Morningstar page (expected for bond/income funds).
+On a fresh deployment, run `generate_name_map.py` once, fill in `Exchange` for the warned stocks (e.g. GOOGL=xnas, JNJ=xnys), then keep that file as the seed for future runs.
 
-## URL templates (download_profiles.py)
+## URL templates (py/download_profiles.py)
 
 | Asset_Type | Exchange | URL pattern |
 |------------|----------|-------------|
@@ -108,29 +122,60 @@ Account section headers have no price or shares (cols 2 and 3 blank). `SKIP_NAME
 
 Pages with no sector data (bond funds, some international funds) produce no row in `fund_sectors.csv`; the join outputs empty sector columns for those positions.
 
-## Python environments
+## Python environment
 
-- **Dev:** `.venv/` in repo root (gitignored)
-- **Deployed:** `/Volumes/pi-nas/openclaw/venv/` — shared with OpenClaw, populated by `pip install -r requirements.txt`
+- **Dev/Deployed:** `pyvenv/` in repo root (gitignored)
 
 All scripts use `#!/usr/bin/env python3` and rely on the active venv. Dependencies: `beautifulsoup4`, `lxml`, `playwright`.
 
-## External paths
+## Quicken export automation (Windows)
 
-| Path | Role |
+The nightly Quicken CSV is produced by a two-file Windows pipeline that runs via Task Scheduler on the Windows PC:
+
+| File | Role |
 |------|------|
-| `/Volumes/pi-nas/openclaw/quicken_tools/archive/` | Nightly Quicken CSV exports |
-| `data/output/` | Generated CSVs consumed by OpenClaw (accessible at `/mnt/portfolio-analysis/data/output/` within OpenClaw) |
+| `bin/portfolio_export.bat` | Wrapper: idempotency check, copies QDF, kills any running Quicken, invokes AHK, kills Quicken after, archives CSV |
+| `ahk/QuickenPortfolioExport.ahk` | UI automation: opens Quicken, navigates to Portfolio view, exports CSV |
 
-`QUICKEN_ARCHIVE` env var overrides the default archive path (needed on Pi where mount paths differ).
+### Data flow
 
-## Deployment notes
+```
+Source QDF (G: drive / Google Drive)
+  → batch copies → C:\tmp\HOME_nightly.QDF
+    → AHK opens in Quicken → exports CSV
+      → \\NAS\openclaw\quicken_exports\portfolio_nightly.csv
+        → batch copies → quicken_exports\portfolio_YYYY-MM-DD.csv
+```
 
-`analyze/name_map.csv` is gitignored — it must be manually placed on each deployment. On a fresh clone, run `generate_name_map.py` once, then fill in `Exchange` for any securities it warns about (rule-5 stocks like GOOGL, JNJ, etc. that can't be auto-classified), then copy the file to the deployment target.
+### Configuration
 
-`QUICKEN_ARCHIVE` env var overrides the default archive path — needed on Pi where the mount path differs from Mac.
+All paths are at the top of each file. Key values in `bin/portfolio_export.bat`:
+- `SRC` — source QDF (currently mapped `G:` drive; may not be available in Task Scheduler context)
+- `DST` — local working QDF (`C:\tmp\HOME_nightly.QDF`)
+- `AHKEXE` — path to AutoHotkey v2 executable
+- `AHK` — UNC path to `ahk/QuickenPortfolioExport.ahk` on the NAS
+- `EXPORT_CSV` / `FINAL_DIR` — nightly output and destination paths
+
+### Exit codes
+
+**AHK script:** `0` success, `11` QDF missing, `12` Quicken window never appeared, `13` window couldn't be activated
+
+**Batch wrapper:** `0` success (including idempotent skip), `2`–`6` pre-launch failures, `7`–`9` post-export failures, `10` Quicken running and could not be killed (run task with highest privileges); AHK nonzero codes propagate directly
+
+### Key fragility points
+
+UI automation breaks when Quicken changes keyboard shortcuts, the number of items in the **Show** or **Group By** dropdowns (the AHK script uses a fixed count of `{Down}` keypresses), or export dialog layout. After any Quicken update, run a manual test before relying on the scheduler.
+
+### Task Scheduler setup
+
+- Trigger: daily at desired time; run only when user is logged on
+- Program: `C:\Windows\System32\cmd.exe`
+- Arguments: `/c "\\%NAS_HOST%\%NAS_SHARE%\portfolio-analysis\bin\portfolio_export.bat"`
+- Start in: `\\%NAS_HOST%\%NAS_SHARE%\portfolio-analysis\bin`
+
+See `QUICKEN_EXPORT.md` for full detail.
 
 ## Open questions
 
 1. `build_holdings_meta.py` (human-curated asset class/region/target_pct) — decide whether to integrate with or keep separate from the automated pipeline.
-2. Deploy to Pi: set `QUICKEN_ARCHIVE`, set up cron for `daily_run.sh`.
+2. Deploy to Pi: set up cron for `bin/analyze.sh <data-root>`.

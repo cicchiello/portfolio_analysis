@@ -11,16 +11,17 @@ Output columns:
 
 Manually fill in asset_class / sub_class / region / sector / target_pct.
 current_pct is computed automatically.
+
+Usage:
+  python3 py/build_holdings_meta.py --out <path> --quicken-archive <dir>
+  python3 py/build_holdings_meta.py --out <path> --quicken <file>
 """
 
+import argparse
 import csv
-import os
 import re
 import sys
 from pathlib import Path
-
-REPO    = Path(__file__).parent.parent
-ARCHIVE = Path(os.environ.get("QUICKEN_ARCHIVE", "/Volumes/pi-nas/openclaw/quicken_tools/archive"))
 
 MIN_MARKET_VALUE = 50.0
 
@@ -51,16 +52,29 @@ def parse_money(s):
         return 0.0
 
 
-def find_latest_quicken():
-    csvs = sorted(ARCHIVE.glob("portfolio_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].csv"))
+def find_latest_quicken(archive):
+    csvs = sorted(Path(archive).glob("portfolio_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].csv"))
     if not csvs:
-        sys.exit(f"ERROR: No portfolio_YYYY-MM-DD.csv found in {ARCHIVE}")
+        sys.exit(f"ERROR: No portfolio_YYYY-MM-DD.csv found in {archive}")
     return csvs[-1]
 
 
 def main():
-    src = Path(sys.argv[1]) if len(sys.argv) > 1 else find_latest_quicken()
-    out = REPO / "data/output/holdings_meta.csv"
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--out",             required=True, help="Output path for holdings_meta.csv")
+    parser.add_argument("--quicken-archive", help="Directory containing portfolio_YYYY-MM-DD.csv files")
+    parser.add_argument("--quicken",         help="Explicit path to Quicken CSV (overrides --quicken-archive)")
+    args = parser.parse_args()
+
+    if args.quicken:
+        src = Path(args.quicken)
+    elif args.quicken_archive:
+        src = find_latest_quicken(args.quicken_archive)
+    else:
+        sys.exit("ERROR: provide --quicken or --quicken-archive")
+
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
 
     rows = list(csv.reader(src.open(encoding="latin-1", newline="")))
 

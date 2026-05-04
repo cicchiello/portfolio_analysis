@@ -6,51 +6,54 @@ daily enriched holdings CSV for analysis by OpenClaw.
 
 ## What this does
 
-1. **Downloads** Morningstar fund/equity profile pages (automated daily)
-2. **Parses** those pages and Morningstar X-Ray exports into clean sector CSVs
-3. **Joins** sector data with the Quicken nightly export to produce
-   `portfolio_with_sectors.csv` — one row per holding, with 12 GICS sector
-   percentages attached
-
-## Relationship to other repos
-
-| Repo | Role |
-|------|------|
-| `quicken_tools` | Windows-side: AHK + batch automation that exports the Quicken portfolio nightly to a CSV in `openclaw/quicken_tools/archive/` |
-| **`portfolio-analysis`** (this repo) | Mac/NAS-side: downloads, parses, and joins to produce the sector-enriched output |
-
-The Quicken archive directory (`/Volumes/pi-nas/openclaw/quicken_tools/archive/`)
-stays within the OpenClaw hierarchy so OpenClaw can read it directly. This repo
-references it by path.
-
-## Quick start
-
-See [PLAN.md](PLAN.md) for the full implementation plan and current status.
-See [docs/SETUP.md](docs/SETUP.md) for environment setup once the project is built out.
+1. **Exports** the Quicken portfolio nightly to a CSV (Windows, via AHK automation)
+2. **Generates** `name_map.csv` — maps every holding to its Morningstar ticker and exchange
+3. **Downloads** Morningstar fund/equity/stock profile pages (one per holding)
+4. **Parses** those pages into a sector breakdown CSV
+5. **Joins** sector data with the Quicken export to produce
+   `portfolio_with_sectors_YYYYMMDD.csv` — one row per holding with 12 GICS sector percentages
 
 ## Directory layout
 
 ```
 portfolio-analysis/
-├── download/           # scripts that fetch raw HTML from Morningstar
-├── parse/              # HTML → CSV translators (run when source changes)
-├── analyze/            # daily join: Quicken CSV + sector CSVs → output
-├── data/               # gitignored — raw downloads and generated CSVs
-│   ├── raw/
-│   │   ├── xray/       # manual Morningstar X-Ray HTML downloads
-│   │   └── profiles/   # automated fund/equity profile HTML downloads
-│   └── output/         # generated CSVs consumed by OpenClaw
-├── daily_run.sh        # end-to-end orchestration: download → parse → join
+├── ahk/                    # AutoHotkey script for Quicken export (Windows)
+├── bin/
+│   ├── analyze.sh          # end-to-end orchestration (Linux/Mac)
+│   └── portfolio_export.bat  # Quicken export wrapper (Windows)
+├── py/
+│   ├── generate_name_map.py  # Step 1: Quicken CSV → name_map.csv
+│   ├── download_profiles.py  # Step 2: download Morningstar HTML profiles
+│   ├── parse_fund_profiles.py  # Step 3: HTML → fund_sectors.csv
+│   ├── join_portfolio.py     # Step 4: join Quicken + sectors → output CSV
+│   └── build_holdings_meta.py  # (standalone) generate holdings metadata scaffold
+├── QUICKEN_EXPORT.md       # detailed docs for the Windows export automation
+├── PLAN.md                 # implementation history and open questions
 └── requirements.txt
 ```
 
-## OpenClaw integration
+## Running
 
-OpenClaw reads from `data/output/` (accessible at `/mnt/portfolio-analysis/data/output/`
-within the OpenClaw environment). It does **not** run the download or parse steps —
-those run on a schedule. It may run `analyze/join_portfolio.py` on demand to refresh
-the join against the latest Quicken archive.
+```bash
+# One-time setup
+python3 -m venv pyvenv && source pyvenv/bin/activate
+pip install -r requirements.txt
+playwright install chromium
 
-The shared Python environment is deployed at `/Volumes/pi-nas/openclaw/venv/` and
-is accessible to OpenClaw. The repo also contains a `.venv/` for local development
-(gitignored).
+# Daily analysis (Linux/Mac)
+./bin/analyze.sh <data-root> <quicken-archive>
+```
+
+All output goes under `<data-root>`:
+- `<data-root>/name_map.csv` — holding → ticker/exchange mapping (gitignored, manually seeded)
+- `<data-root>/work_YYYYMMDD/` — downloaded HTML and `fund_sectors.csv`
+- `<data-root>/portfolio_with_sectors_YYYYMMDD.csv` — final output
+
+## Deployment
+
+`name_map.csv` is not in the repo — it must be manually placed at `<data-root>/name_map.csv`
+on first deployment. Run `generate_name_map.py` once, fill in the `Exchange` column for any
+stocks it warns about, then use that file as the seed for future runs.
+
+See [CLAUDE.md](CLAUDE.md) for full developer guidance and [QUICKEN_EXPORT.md](QUICKEN_EXPORT.md)
+for the Windows export automation.

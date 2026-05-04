@@ -1,31 +1,25 @@
 #!/usr/bin/env python3
 """
-Tier 2: Parse Morningstar fund/equity profile HTML pages → fund_sectors.csv.
+Parse Morningstar fund/equity profile HTML pages → fund_sectors.csv.
 
-Reads all *.html files in data/raw/profiles/. Handles three page types:
+Reads all *.html files in the work directory. Handles three page types:
 
-  Private Fund private pages  — table header: ['Sector', 'Fund %', ...]
-  Public fund/ETF pages   — table header: ['Sectors', 'Investment%', ...]
-  Individual stock pages  — no sector table; sector extracted from page text,
-                            producing a 100% row for that one sector
+  Private Fund pages  — table header: ['Sector', 'Fund %', ...]
+  Public fund/ETF     — table header: ['Sectors', 'Investment%', ...]
+  Individual stocks   — no sector table; sector extracted from page text,
+                        producing a 100% row for that one sector
 
-Run when new HTML files are downloaded (not part of daily_run.sh).
-
-Output:
-  data/output/fund_sectors.csv   one row per holding, same schema as
-                                 morningstar_sectors.csv so join_portfolio.py
-                                 can load both interchangeably.
+Usage:
+  python3 py/parse_fund_profiles.py --work-dir <dir>
+  python3 py/parse_fund_profiles.py --work-dir <dir> --force
 """
 
 import csv
 import re
 import sys
+import argparse
 from pathlib import Path
 from bs4 import BeautifulSoup
-
-REPO     = Path(__file__).parent.parent
-IN_DIR   = REPO / "data/raw/profiles"
-OUT_PATH = REPO / "data/output/fund_sectors.csv"
 
 SECTOR_COLS = [
     "Basic_Materials", "Consumer_Cyclical", "Financial_Services", "Real_Estate",
@@ -54,13 +48,6 @@ def _is_bot_page(soup):
 
 
 def find_sector_table(soup):
-    """
-    Return (rows, value_col_index) for the first matching sector table, or (None, None).
-
-    Recognises two layouts:
-      Private Fund  — header: ['Sector', 'Fund %', ...]          value in col 1
-      Public    — header: ['Sectors', 'Investment%', ...]    value in col 1
-    """
     for table in soup.find_all("table"):
         rows = table.find_all("tr")
         if not rows:
@@ -85,10 +72,6 @@ def find_sector_table(soup):
 
 
 def extract_stock_sector(soup):
-    """
-    For individual stock quote pages: find 'Sector <Name> Industry' in page text
-    and return a sectors dict with 100% in that one sector.
-    """
     text = soup.get_text(" ")
     m = re.search(r'Sector\s+([\w &]+?)\s+Industry', text)
     if not m:
@@ -134,24 +117,24 @@ def parse_html(path):
     return ms_name, None
 
 
-def load_existing():
-    if not OUT_PATH.exists():
-        return set()
-    with open(OUT_PATH, newline="", encoding="utf-8") as f:
-        return {row["MS_Name"] for row in csv.DictReader(f)}
-
-
 def main():
-    import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--force", action="store_true", help="Reprocess already-written entries")
+    parser.add_argument("--work-dir", required=True, help="Directory containing HTML files; fund_sectors.csv written here")
+    parser.add_argument("--force",    action="store_true", help="Reprocess already-written entries")
     args = parser.parse_args()
 
-    htmls = sorted(p for p in IN_DIR.glob("*.html") if not p.name.startswith("._"))
-    if not htmls:
-        sys.exit(f"No HTML files found in {IN_DIR}")
+    work_dir = Path(args.work_dir)
+    out_path = work_dir / "fund_sectors.csv"
 
-    existing = set() if args.force else load_existing()
+    htmls = sorted(p for p in work_dir.glob("*.html") if not p.name.startswith("._"))
+    if not htmls:
+        sys.exit(f"No HTML files found in {work_dir}")
+
+    existing = set()
+    if not args.force and out_path.exists():
+        with open(out_path, newline="", encoding="utf-8") as f:
+            existing = {row["MS_Name"] for row in csv.DictReader(f)}
+
     new_rows, skipped, failed = [], [], []
 
     for html in htmls:
@@ -170,13 +153,13 @@ def main():
         print(f"  OK  {html.name:40s}  dominant: {dominant} {sectors.get(dominant, 0.0):.1f}%")
 
     if new_rows:
-        mode = "w" if args.force else "a"
-        with open(OUT_PATH, mode, newline="", encoding="utf-8") as f:
+        mode = "w" if args.force or not out_path.exists() else "a"
+        with open(out_path, mode, newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=["MS_Name"] + SECTOR_COLS)
             if mode == "w":
                 w.writeheader()
             w.writerows(new_rows)
-        print(f"\nWrote {len(new_rows)} entries → {OUT_PATH}")
+        print(f"\nWrote {len(new_rows)} entries → {out_path}")
     else:
         print("No new entries to write.")
 

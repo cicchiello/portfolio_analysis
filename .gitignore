@@ -1,7 +1,9 @@
 pyvenv/
 data/
 name_map.csv
+bin/config.bat
 *.pyc
 __pycache__/
 .DS_Store
 ._*
+*~

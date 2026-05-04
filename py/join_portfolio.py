@@ -1,26 +1,16 @@
 #!/usr/bin/env python3
 """
-Step 4 (daily): Join Quicken portfolio positions with Morningstar sector data.
-
-Inputs:
-  data/output/fund_sectors.csv      - from py/parse_fund_profiles.py
-  data/output/morningstar_sectors.csv - optional
-  name_map.csv                      - maps Quicken names → tickers + exchange
-  $QUICKEN_ARCHIVE/portfolio_YYYY-MM-DD.csv  (most recent)
+Join Quicken portfolio positions with Morningstar sector data.
 
 Usage:
-  python3 py/join_portfolio.py
-  python3 py/join_portfolio.py --quicken path/to/portfolio_2026-04-30.csv
+  python3 py/join_portfolio.py --name-map <path> --fund-sectors <path> --out <path> --quicken-archive <dir>
+  python3 py/join_portfolio.py --name-map <path> --fund-sectors <path> --out <path> --quicken <file>
 """
 
 import csv
-import os
 import sys
 import argparse
 from pathlib import Path
-
-REPO    = Path(__file__).parent.parent
-ARCHIVE = Path(os.environ.get("QUICKEN_ARCHIVE", "/Volumes/pi-nas/openclaw/quicken_tools/archive"))
 
 SECTOR_COLS = [
     "Basic_Materials", "Consumer_Cyclical", "Financial_Services", "Real_Estate",
@@ -31,25 +21,23 @@ SECTOR_COLS = [
 SKIP_NAMES = {"Cash"}
 
 
-def find_latest_quicken():
-    csvs = sorted(ARCHIVE.glob("portfolio_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].csv"))
+def find_latest_quicken(archive):
+    csvs = sorted(Path(archive).glob("portfolio_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].csv"))
     if not csvs:
-        sys.exit(f"ERROR: No portfolio_YYYY-MM-DD.csv found in {ARCHIVE}")
+        sys.exit(f"ERROR: No portfolio_YYYY-MM-DD.csv found in {archive}")
     return csvs[-1]
 
 
-def load_sectors(*paths):
-    """Merge one or more sector CSVs keyed by MS_Name; first occurrence wins."""
+def load_sectors(path):
     sectors = {}
-    for path in paths:
-        p = Path(path)
-        if not p.exists():
-            continue
-        with open(p, newline="", encoding="utf-8") as f:
-            for row in csv.DictReader(f):
-                key = row["MS_Name"]
-                if key not in sectors:
-                    sectors[key] = {c: row.get(c, "") for c in SECTOR_COLS}
+    p = Path(path)
+    if not p.exists():
+        return sectors
+    with open(p, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            key = row["MS_Name"]
+            if key not in sectors:
+                sectors[key] = {c: row.get(c, "") for c in SECTOR_COLS}
     return sectors
 
 
@@ -122,20 +110,26 @@ def parse_quicken(path):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--quicken", help="Path to Quicken archive CSV")
+    parser.add_argument("--name-map",        required=True, help="Path to name_map.csv")
+    parser.add_argument("--fund-sectors",    required=True, help="Path to fund_sectors.csv")
+    parser.add_argument("--out",             required=True, help="Output path for portfolio_with_sectors CSV")
+    parser.add_argument("--quicken-archive", help="Directory containing portfolio_YYYY-MM-DD.csv files")
+    parser.add_argument("--quicken",         help="Explicit path to Quicken CSV (overrides --quicken-archive)")
     args = parser.parse_args()
 
-    quicken_path = Path(args.quicken) if args.quicken else find_latest_quicken()
-    name_map_csv = REPO / "name_map.csv"
+    if args.quicken:
+        quicken_path = Path(args.quicken)
+    elif args.quicken_archive:
+        quicken_path = find_latest_quicken(args.quicken_archive)
+    else:
+        sys.exit("ERROR: provide --quicken or --quicken-archive")
 
-    if not name_map_csv.exists():
-        sys.exit(f"ERROR: {name_map_csv} not found")
+    name_map_path = Path(args.name_map)
+    if not name_map_path.exists():
+        sys.exit(f"ERROR: {name_map_path} not found")
 
-    sectors = load_sectors(
-        REPO / "data/output/fund_sectors.csv",
-        REPO / "data/output/morningstar_sectors.csv",
-    )
-    name_map = load_name_map(name_map_csv)
+    sectors  = load_sectors(args.fund_sectors)
+    name_map = load_name_map(name_map_path)
 
     print(f"Quicken file : {quicken_path.name}")
     print(f"Sector keys  : {len(sectors)}")
@@ -162,7 +156,8 @@ def main():
 
         out_rows.append(row)
 
-    out_path   = REPO / "data/output/portfolio_with_sectors.csv"
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
         "Account", "Name", "Ticker", "Price", "Shares",
         "Market_Value", "Cost_Basis", "Gain_Loss",

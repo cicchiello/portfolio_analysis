@@ -15,18 +15,14 @@ Prints warnings for:
   - Securities no longer in the portfolio (removed from name_map.csv)
 
 Usage:
-  python3 py/generate_name_map.py
-  python3 py/generate_name_map.py --quicken path/to/portfolio_YYYY-MM-DD.csv
+  python3 py/generate_name_map.py --name-map <path> --quicken-archive <dir>
+  python3 py/generate_name_map.py --name-map <path> --quicken <file>
 """
 
 import argparse
 import csv
-import os
 import sys
 from pathlib import Path
-
-REPO    = Path(__file__).parent.parent
-ARCHIVE = Path(os.environ.get("QUICKEN_ARCHIVE", "/Volumes/pi-nas/openclaw/quicken_tools/archive"))
 
 
 def classify(ticker):
@@ -43,10 +39,10 @@ def classify(ticker):
     return "stock", ""
 
 
-def find_latest_quicken():
-    csvs = sorted(ARCHIVE.glob("portfolio_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].csv"))
+def find_latest_quicken(archive):
+    csvs = sorted(Path(archive).glob("portfolio_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].csv"))
     if not csvs:
-        sys.exit(f"ERROR: No portfolio_YYYY-MM-DD.csv found in {ARCHIVE}")
+        sys.exit(f"ERROR: No portfolio_YYYY-MM-DD.csv found in {archive}")
     return csvs[-1]
 
 
@@ -62,7 +58,6 @@ def parse_quicken(path):
     stop = {"Watch List  (add) (edit)", "Indexes", "Totals:", "PCFN"}
     holdings = []
     seen_names = set()
-    current_account = None
 
     with open(path, newline="", encoding="latin-1") as f:
         rows = list(csv.reader(f))
@@ -85,8 +80,7 @@ def parse_quicken(path):
         shares = parse_num((row[3] if len(row) > 3 else "").replace(" A", ""))
 
         if price is None and shares is None:
-            current_account = name
-            continue
+            continue  # account header row
 
         if name == "Cash":
             continue
@@ -101,7 +95,7 @@ def parse_quicken(path):
 def load_existing(path):
     """Return dict of Quicken_Name → {Ticker, Asset_Type, Exchange}."""
     result = {}
-    if not path.exists():
+    if not Path(path).exists():
         return result
     with open(path, newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
@@ -115,19 +109,27 @@ def load_existing(path):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--quicken", help="Path to Quicken archive CSV")
+    parser.add_argument("--name-map",        required=True, help="Path to name_map.csv (read existing, write new)")
+    parser.add_argument("--quicken-archive", help="Directory containing portfolio_YYYY-MM-DD.csv files")
+    parser.add_argument("--quicken",         help="Explicit path to Quicken CSV (overrides --quicken-archive)")
     args = parser.parse_args()
 
-    quicken_path = Path(args.quicken) if args.quicken else find_latest_quicken()
-    name_map_path = REPO / "name_map.csv"
+    if args.quicken:
+        quicken_path = Path(args.quicken)
+    elif args.quicken_archive:
+        quicken_path = find_latest_quicken(args.quicken_archive)
+    else:
+        sys.exit("ERROR: provide --quicken or --quicken-archive")
+
+    name_map_path = Path(args.name_map)
 
     existing = load_existing(name_map_path)
     holdings = parse_quicken(quicken_path)
 
-    new_names     = []
-    removed_names = []
+    new_names      = []
+    removed_names  = []
     needs_exchange = []
-    out_rows = []
+    out_rows       = []
 
     current_names = {name for name, _ in holdings}
     for name in existing:
@@ -139,7 +141,6 @@ def main():
 
         if name in existing:
             entry = existing[name]
-            # Preserve "etf" (can't be auto-detected); always apply rule-derived type otherwise
             asset_type = "etf" if entry["Asset_Type"] == "etf" else auto_type
             exchange   = entry["Exchange"] or auto_exchange
         else:
@@ -156,13 +157,14 @@ def main():
             "Exchange":     exchange.lower(),
         })
 
+    name_map_path.parent.mkdir(parents=True, exist_ok=True)
     with open(name_map_path, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=["Quicken_Name", "Ticker", "Asset_Type", "Exchange"])
         w.writeheader()
         w.writerows(out_rows)
 
     print(f"Quicken file : {quicken_path.name}")
-    print(f"Securities   : {len(out_rows)} written to {name_map_path.name}")
+    print(f"Securities   : {len(out_rows)} written to {name_map_path}")
 
     if removed_names:
         print(f"\nRemoved ({len(removed_names)}) — no longer in portfolio:")

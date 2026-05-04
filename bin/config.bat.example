@@ -1,0 +1,10 @@
+@echo off
+rem === DEPLOYMENT CONFIG ===
+rem Copy this file to config.bat and fill in your values.
+rem config.bat is gitignored and never committed.
+
+set "NAS_HOST=YOUR_NAS_HOST"
+set "NAS_SHARE=YOUR_NAS_SHARE"
+set "SRC=G:\My Drive\personal\finances\HOME.QDF"
+set "DST=C:\tmp\HOME_nightly.QDF"
+set "AHKEXE=C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe"
