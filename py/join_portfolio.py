@@ -156,6 +156,36 @@ def main():
 
         out_rows.append(row)
 
+    # Build market-value-weighted total sector row (only rows with sector data contribute)
+    sector_weighted = {c: 0.0 for c in SECTOR_COLS}
+    total_mv        = 0.0
+    total_cb        = 0.0
+    total_gl        = 0.0
+    sector_mv       = 0.0  # market value of holdings with sector data
+
+    for row in out_rows:
+        mv = row.get("Market_Value") or 0.0
+        total_mv += mv
+        total_cb += row.get("Cost_Basis") or 0.0
+        total_gl += row.get("Gain_Loss")  or 0.0
+        if row.get(SECTOR_COLS[0], "") != "":
+            sector_mv += mv
+            for c in SECTOR_COLS:
+                sector_weighted[c] += mv * float(row.get(c) or 0.0)
+
+    total_row = {
+        "Account":      "",
+        "Name":         "TOTAL",
+        "Ticker":       "",
+        "Price":        "",
+        "Shares":       "",
+        "Market_Value": round(total_mv, 2),
+        "Cost_Basis":   round(total_cb, 2),
+        "Gain_Loss":    round(total_gl, 2),
+    }
+    for c in SECTOR_COLS:
+        total_row[c] = round(sector_weighted[c] / sector_mv, 4) if sector_mv else ""
+
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
@@ -167,6 +197,7 @@ def main():
         w = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         w.writeheader()
         w.writerows(out_rows)
+        w.writerow(total_row)
 
     matched = len(out_rows) - len(unmatched)
     print(f"Matched      : {matched}/{len(out_rows)} positions have sector data")
