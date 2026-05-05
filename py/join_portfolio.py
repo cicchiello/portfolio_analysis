@@ -45,8 +45,38 @@ def load_name_map(path):
     result = {}
     with open(path, newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
-            result[row["Quicken_Name"]] = {"Ticker": row["Ticker"]}
+            result[row["Quicken_Name"]] = {
+                "Ticker":     row["Ticker"],
+                "Asset_Type": row.get("Asset_Type", ""),
+            }
     return result
+
+
+_KNOWN_IRA_ACCOUNTS = {
+    # Accounts whose names don't yet reflect their IRA status — remove once renamed in Quicken
+    "American Funds",
+    "Primerica",
+}
+
+def derive_account_type(account):
+    a = account or ""
+    if a in _KNOWN_IRA_ACCOUNTS:
+        return "IRA"
+    if "Roth" in a:
+        return "Roth"
+    if "Inherited IRA" in a:
+        return "I-IRA"
+    if "IRA" in a or "401K" in a.upper() or "Health Equity" in a:
+        return "IRA"
+    return "Taxable"
+
+
+def derive_asset_class(asset_type, has_sectors):
+    if asset_type == "stock":
+        return "EQ"
+    if asset_type == "bond":
+        return "FI"
+    return "EQ-Fund" if has_sectors else "FI-Fund"
 
 
 def parse_num(s):
@@ -143,10 +173,13 @@ def main():
         qname   = pos["Name"]
         mapping = name_map.get(qname)
 
-        ticker      = mapping["Ticker"] if mapping else pos.get("Ticker", "")
+        ticker      = mapping["Ticker"]     if mapping else pos.get("Ticker", "")
+        asset_type  = mapping["Asset_Type"] if mapping else ""
         sector_data = sectors.get(ticker) if ticker else None
 
-        row = {**pos, "Ticker": ticker}
+        row = {**pos, "Ticker": ticker,
+               "Asset_Class":   derive_asset_class(asset_type, bool(sector_data)),
+               "Account_Type":  derive_account_type(pos["Account"])}
         if sector_data:
             row.update(sector_data)
         else:
@@ -177,6 +210,8 @@ def main():
         "Account":      "",
         "Name":         "TOTAL",
         "Ticker":       "",
+        "Asset_Class":  "",
+        "Account_Type": "",
         "Price":        "",
         "Shares":       "",
         "Market_Value": round(total_mv, 2),
@@ -191,7 +226,7 @@ def main():
     fieldnames = [
         "Account", "Name", "Ticker", "Price", "Shares",
         "Market_Value", "Cost_Basis", "Gain_Loss",
-    ] + SECTOR_COLS
+    ] + SECTOR_COLS + ["Asset_Class", "Account_Type"]
 
     with open(out_path, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")

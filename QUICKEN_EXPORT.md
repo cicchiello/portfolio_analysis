@@ -4,23 +4,19 @@ Automates a daily export of the Quicken **Investing Portfolio** view to a CSV fi
 
 ## What this does
 
-The current workflow is a two-stage Windows automation:
+The workflow uses **two Task Scheduler tasks** — one elevated (to kill Quicken if running) and one normal-user (to run the export). Quicken cannot be killed by a non-elevated process, but must not itself run elevated.
 
-1. A wrapper batch file copies the source Quicken `.QDF` file to a **local working file** on the Windows machine.
-2. The batch file launches an AutoHotkey v2 script and waits for it to finish.
-3. The AutoHotkey script aborts immediately if Quicken is already running.
-4. The AutoHotkey script opens the local working `.QDF` file.
-5. It waits for Quicken to finish launching.
-6. It opens the **Investing Portfolio** view.
-7. It sets:
-   - **Show** = `Holdings`
-   - **Group By** = `Accounts`
-8. It opens the portfolio export workflow.
-9. It selects the **Export to:** option.
-10. It saves the export to a fixed nightly CSV path.
-11. It approves overwrite of the nightly CSV.
-12. It closes Quicken.
-13. If the AutoHotkey script returns success, the wrapper batch file copies the nightly CSV to an archive filename for that day.
+**Task 1 — Kill Quicken** (elevated, triggers first):
+- Runs `taskkill /IM qw.exe /F` to ensure no stale Quicken instance blocks the export.
+
+**Task 2 — Export** (normal user, triggers after Task 1):
+1. Loads deployment config from `bin/config.bat` (NAS paths, QDF location, AHK path).
+2. Skips if today's archive already exists (idempotent).
+3. Checks Quicken is not running; exits with code 10 if it is.
+4. Copies the source `.QDF` to a local working file.
+5. Launches the AutoHotkey script, passing the export CSV path as an argument.
+6. The AHK script opens the working `.QDF`, navigates to the Investing Portfolio view, sets **Show = Holdings** and **Group By = Accounts**, exports to the nightly CSV path, and closes Quicken.
+7. On AHK success, copies the nightly CSV to a date-stamped archive file.
 
 The current nightly CSV path is:
 
@@ -345,59 +341,20 @@ exit /b 0
 
 ## Configuration
 
-These are the main values you are likely to customize.
+All deployment-specific values live in `bin/config.bat`, which is gitignored. Copy
+`bin/config.bat.example` → `bin/config.bat` and set:
 
-### In the AutoHotkey script
+| Variable | Description |
+|----------|-------------|
+| `NAS_HOST` | NAS hostname or IP address |
+| `NAS_SHARE` | NAS share name |
+| `SRC` | Source `.QDF` file path (e.g. mapped Google Drive) |
+| `DST` | Local working `.QDF` path (e.g. `C:\tmp\HOME_nightly.QDF`) |
+| `AHKEXE` | Path to AutoHotkey v2 executable |
 
-#### `qdfPath`
+The batch file derives all other paths (`AHK`, `EXPORT_CSV`, `FINAL_DIR`) automatically from `NAS_HOST` and `NAS_SHARE`.
 
-Local path to the copied working Quicken data file.
-
-Example:
-
-```ahk
-qdfPath := "C:\tmp\HOME_nightly.QDF"
-```
-
-#### `exportPath`
-
-Nightly CSV path written by Quicken.
-
-Example:
-
-```ahk
-exportPath := A_Args[1]  ; passed by portfolio_export.bat
-```
-
-### In the batch wrapper
-
-#### `SRC`
-
-Source `.QDF` to be copied into the local working location.
-
-#### `DST`
-
-Local working `.QDF` opened by the automation.
-
-#### `AHKEXE`
-
-Path to AutoHotkey v2 executable.
-
-#### `AHK`
-
-Path to the AutoHotkey automation script.
-
-#### `EXPORT_CSV`
-
-Nightly CSV expected after the AHK script completes.
-
-#### `FINAL_DIR`
-
-Directory receiving archive copies of the nightly CSV.
-
-#### `FINAL_CSV`
-
-Date-stamped archive filename, currently `portfolio_yyyy-mm-dd.csv`.
+The AHK script has one hardcoded value: `qdfPath` (the local working `.QDF` to open). All other values including the export path are passed from the batch file at runtime via `A_Args[1]`.
 
 ---
 
@@ -432,36 +389,21 @@ To test manually:
 
 ## Running from Task Scheduler
 
-The intended final scheduler entry point is the **batch wrapper**, not the `.ahk` file directly.
+Two tasks are required. Quicken cannot be terminated by a non-elevated process, but must not run elevated itself.
 
-Recommended Task Scheduler settings:
+**Task 1 — Kill Quicken** (runs first, a few minutes before Task 2):
+- Run with highest privileges: **Yes**
+- Program: `taskkill`
+- Arguments: `/IM qw.exe /F`
 
-- **Trigger:** Daily at the desired time
-- **Action:** Start the batch file, or start `cmd.exe /c <batchfile>`
-- **Run only when user is logged on:** Yes
-- **Start in:** the wrapper script directory
+**Task 2 — Export** (runs after Task 1):
+- Run with highest privileges: **No**
+- Run only when user is logged on: **Yes**
+- Program: `C:\Windows\System32\cmd.exe`
+- Arguments: `/c "\\%NAS_HOST%\%NAS_SHARE%\portfolio-analysis\bin\portfolio_export.bat"`
+- Start in: `\\%NAS_HOST%\%NAS_SHARE%\portfolio-analysis\bin`
 
-A robust explicit configuration is usually:
-
-- **Program/script:**
-
-```text
-C:\Windows\System32\cmd.exe
-```
-
-- **Add arguments:**
-
-```text
-/c "C:\path\to\wrapper.bat"
-```
-
-- **Start in:**
-
-```text
-C:\path\to
-```
-
-Do at least one manual **Run** from Task Scheduler before relying on the daily trigger.
+Do at least one manual **Run** of each task (in order) before relying on the daily trigger.
 
 ---
 
@@ -504,7 +446,7 @@ The CSV output can still be written to the NAS/share.
 
 ### Script starts while Quicken is already open
 
-This is an intentional guard. The AHK script returns exit code `10`:
+The batch wrapper checks for a running `qw.exe` before launching AHK and exits with code `10` if found. This should be prevented by Task 1 (the elevated kill task) running first. If it persists, verify Task 1 is configured with "Run with highest privileges" and that its trigger fires before Task 2. The old guard was:
 
 ```ahk
 if ProcessExist("qw.exe") {
