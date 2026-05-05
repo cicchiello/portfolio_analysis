@@ -124,6 +124,9 @@ def parse_quicken(path):
         if name in SKIP_NAMES or name == "Cash":
             continue
 
+        if gainls is None and mktval is not None and costb is not None:
+            gainls = round(mktval - costb, 2)
+
         holdings.append({
             "Account":      current_account or "",
             "Name":         name,
