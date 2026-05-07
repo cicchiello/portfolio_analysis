@@ -66,7 +66,9 @@ def derive_account_type(account):
         return "Roth"
     if "Inherited IRA" in a:
         return "I-IRA"
-    if "IRA" in a or "401K" in a.upper() or "Health Equity" in a:
+    if "HSA" in a.upper():
+        return "HSA"
+    if "IRA" in a or "401K" in a.upper():
         return "IRA"
     return "Taxable"
 
