@@ -41,6 +41,7 @@ echo "--- Step 4: join ---"
 "$VENV" "$REPO/py/join_portfolio.py" \
     --name-map "$NAME_MAP" \
     --fund-sectors "$WORK_DIR/fund_sectors.csv" \
+    --fund-prices "$WORK_DIR/fund_prices.csv" \
     --quicken-archive "$QUICKEN_ARCHIVE" \
     --out "$OUT"
 echo

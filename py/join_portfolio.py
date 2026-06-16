@@ -41,6 +41,21 @@ def load_sectors(path):
     return sectors
 
 
+def load_ms_prices(path):
+    """Return {ticker: float} from fund_prices.csv; empty dict if file absent."""
+    prices = {}
+    p = Path(path) if path else None
+    if not p or not p.exists():
+        return prices
+    with open(p, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            try:
+                prices[row["MS_Name"]] = float(row["MS_Price"])
+            except (KeyError, ValueError):
+                pass
+    return prices
+
+
 def load_name_map(path):
     result = {}
     with open(path, newline="", encoding="utf-8") as f:
@@ -145,6 +160,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--name-map",        required=True, help="Path to name_map.csv")
     parser.add_argument("--fund-sectors",    required=True, help="Path to fund_sectors.csv")
+    parser.add_argument("--fund-prices",     help="Path to fund_prices.csv (MS closing prices override Quicken prices)")
     parser.add_argument("--out",             required=True, help="Output path for portfolio_with_sectors CSV")
     parser.add_argument("--quicken-archive", help="Directory containing portfolio_YYYY-MM-DD.csv files")
     parser.add_argument("--quicken",         help="Explicit path to Quicken CSV (overrides --quicken-archive)")
@@ -161,11 +177,13 @@ def main():
     if not name_map_path.exists():
         sys.exit(f"ERROR: {name_map_path} not found")
 
-    sectors  = load_sectors(args.fund_sectors)
-    name_map = load_name_map(name_map_path)
+    sectors   = load_sectors(args.fund_sectors)
+    ms_prices = load_ms_prices(args.fund_prices)
+    name_map  = load_name_map(name_map_path)
 
     print(f"Quicken file : {quicken_path.name}")
     print(f"Sector keys  : {len(sectors)}")
+    print(f"MS prices    : {len(ms_prices)}")
     positions = parse_quicken(quicken_path)
     print(f"Positions    : {len(positions)}")
 
@@ -180,9 +198,25 @@ def main():
         asset_type  = mapping["Asset_Type"] if mapping else ""
         sector_data = sectors.get(ticker) if ticker else None
 
-        row = {**pos, "Ticker": ticker,
-               "Asset_Class":   derive_asset_class(asset_type, bool(sector_data)),
-               "Account_Type":  derive_account_type(pos["Account"])}
+        ms_price = ms_prices.get(ticker) if ticker else None
+        if ms_price is not None:
+            shares = pos.get("Shares")
+            price     = ms_price
+            mkt_val   = round(ms_price * shares, 2) if shares is not None else pos.get("Market_Value")
+            cost_b    = pos.get("Cost_Basis")
+            gain_loss = round(mkt_val - cost_b, 2) if (mkt_val is not None and cost_b is not None) else pos.get("Gain_Loss")
+        else:
+            price     = pos["Price"]
+            mkt_val   = pos["Market_Value"]
+            gain_loss = pos["Gain_Loss"]
+
+        row = {**pos,
+               "Ticker":       ticker,
+               "Price":        price,
+               "Market_Value": mkt_val,
+               "Gain_Loss":    gain_loss,
+               "Asset_Class":  derive_asset_class(asset_type, bool(sector_data)),
+               "Account_Type": derive_account_type(pos["Account"])}
         if sector_data:
             row.update(sector_data)
         else:

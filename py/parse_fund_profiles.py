@@ -15,6 +15,7 @@ Usage:
 """
 
 import csv
+import json
 import re
 import sys
 import argparse
@@ -40,6 +41,38 @@ SECTOR_NAME_MAP = {
     "Healthcare":             "Healthcare",
     "Utilities":              "Utilities",
 }
+
+
+def extract_ms_price(soup):
+    """Extract closing/NAV price from a Morningstar page. Returns float or None."""
+    for script in soup.find_all("script"):
+        s = script.string or ""
+        if "PriceSpecification" in s:
+            try:
+                data = json.loads(s)
+                p = data.get("price")
+                if p is not None:
+                    return float(p)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                pass
+
+    text = soup.get_text(" ")
+
+    m = re.search(r"Previous Close Price\s+\$([0-9,]+\.[0-9]+)", text)
+    if m:
+        try:
+            return float(m.group(1).replace(",", ""))
+        except ValueError:
+            pass
+
+    m = re.search(r"\bPrice\s+([0-9]+\.[0-9]+)\s", text)
+    if m:
+        try:
+            return float(m.group(1))
+        except ValueError:
+            pass
+
+    return None
 
 
 def _is_bot_page(soup):
@@ -83,14 +116,16 @@ def extract_stock_sector(soup):
 
 
 def parse_html(path):
-    """Return (ms_name, sector_dict) or (ms_name, None) if no sector data found."""
+    """Return (ms_name, sector_dict_or_None, price_or_None)."""
     with open(path, encoding="utf-8", errors="replace") as f:
         soup = BeautifulSoup(f.read(), "lxml")
 
     ms_name = path.stem
 
     if _is_bot_page(soup):
-        return ms_name, None
+        return ms_name, None, None
+
+    price = extract_ms_price(soup)
 
     rows, val_col = find_sector_table(soup)
     if rows is not None:
@@ -108,13 +143,13 @@ def parse_html(path):
                 pass
         if len(sectors) >= 11:
             sectors.setdefault("Not_Classified", 0.0)
-            return ms_name, sectors
+            return ms_name, sectors, price
 
     stock_sectors = extract_stock_sector(soup)
     if stock_sectors is not None:
-        return ms_name, stock_sectors
+        return ms_name, stock_sectors, price
 
-    return ms_name, None
+    return ms_name, None, price
 
 
 def main():
@@ -125,6 +160,7 @@ def main():
 
     work_dir = Path(args.work_dir)
     out_path = work_dir / "fund_sectors.csv"
+    out_prices_path = work_dir / "fund_prices.csv"
 
     htmls = sorted(p for p in work_dir.glob("*.html") if not p.name.startswith("._"))
     if not htmls:
@@ -135,10 +171,15 @@ def main():
         with open(out_path, newline="", encoding="utf-8") as f:
             existing = {row["MS_Name"] for row in csv.DictReader(f)}
 
-    new_rows, skipped, failed = [], [], []
+    existing_prices = set()
+    if not args.force and out_prices_path.exists():
+        with open(out_prices_path, newline="", encoding="utf-8") as f:
+            existing_prices = {row["MS_Name"] for row in csv.DictReader(f)}
+
+    new_rows, new_prices, skipped, failed = [], [], [], []
 
     for html in htmls:
-        ms_name, sectors = parse_html(html)
+        ms_name, sectors, price = parse_html(html)
 
         if ms_name in existing:
             skipped.append(html.name)
@@ -146,11 +187,13 @@ def main():
 
         if sectors is None:
             failed.append(html.name)
-            continue
+        else:
+            new_rows.append({"MS_Name": ms_name, **{c: sectors.get(c, 0.0) for c in SECTOR_COLS}})
+            dominant = max((c for c in SECTOR_COLS if c != "Not_Classified"), key=lambda c: sectors.get(c, 0.0))
+            print(f"  OK  {html.name:40s}  dominant: {dominant} {sectors.get(dominant, 0.0):.1f}%")
 
-        new_rows.append({"MS_Name": ms_name, **{c: sectors.get(c, 0.0) for c in SECTOR_COLS}})
-        dominant = max((c for c in SECTOR_COLS if c != "Not_Classified"), key=lambda c: sectors.get(c, 0.0))
-        print(f"  OK  {html.name:40s}  dominant: {dominant} {sectors.get(dominant, 0.0):.1f}%")
+        if price is not None and ms_name not in existing_prices:
+            new_prices.append({"MS_Name": ms_name, "MS_Price": price})
 
     if new_rows:
         mode = "w" if args.force or not out_path.exists() else "a"
@@ -162,6 +205,15 @@ def main():
         print(f"\nWrote {len(new_rows)} entries → {out_path}")
     else:
         print("No new entries to write.")
+
+    if new_prices:
+        mode = "w" if args.force or not out_prices_path.exists() else "a"
+        with open(out_prices_path, mode, newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=["MS_Name", "MS_Price"])
+            if mode == "w":
+                w.writeheader()
+            w.writerows(new_prices)
+        print(f"Wrote {len(new_prices)} prices → {out_prices_path}")
 
     if skipped:
         print(f"Skipped {len(skipped)} already-written.")
