@@ -15,7 +15,7 @@ if !FileExist(qdfPath) {
 }
 
 Run qdfPath
-Sleep 25000
+Sleep 50000
 
 if !WinExist("ahk_exe qw.exe") {
     ExitApp 12
